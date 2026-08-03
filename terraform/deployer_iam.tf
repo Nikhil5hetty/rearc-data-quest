@@ -214,7 +214,7 @@ resource "aws_iam_user" "deployer" {
 
   tags = {
     Name    = "rearc-data-deployer-${var.environment}"
-    Purpose = "Terraform deployer for rearc-data-quest (${var.environment})"
+    Purpose = "Terraform deployer for rearc-data-quest ${var.environment}"
   }
 }
 
