@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local data & build artifacts (never commit)
+data/
+output/
+dist/
+
+# Terraform state and ephemeral files
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/tfplan-*
+terraform/*.tfstate*
+
+# AWS credentials
+.aws/
+*.pem
+*.env
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+
+# Lambda source copies written by old Terraform (no longer used)
+src/lambda_part1_2/part1_bls_sync.py
+src/lambda_part1_2/part2_datausa_api.py
+src/lambda_part3/lambda_handler.py

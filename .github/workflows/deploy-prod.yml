@@ -1,0 +1,82 @@
+name: Deploy — Prod
+
+on:
+  push:
+    tags:
+      - "release/*"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'deploy-prod' to confirm production deployment"
+        required: true
+
+env:
+  AWS_REGION: ap-south-1
+  ENV: prod
+
+jobs:
+  guard:
+    name: Confirm production deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check manual confirmation
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "deploy-prod" ]; then
+            echo "❌ Production deployment not confirmed. Input must be 'deploy-prod'."
+            exit 1
+          fi
+          echo "✅ Production deployment confirmed."
+
+  deploy-prod:
+    name: Build & Deploy to Prod
+    runs-on: ubuntu-latest
+    needs: guard
+    environment: prod
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Build Lambda packages
+        run: bash scripts/build.sh
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.0"
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init -reconfigure
+
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -var-file=environments/prod.tfvars -out=tfplan-prod
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan-prod
+
+      - name: Show deployment outputs
+        working-directory: terraform
+        run: terraform output -var-file=environments/prod.tfvars

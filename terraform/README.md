@@ -1,0 +1,431 @@
+# Part 4: Infrastructure as Code & Data Pipeline with Terraform
+
+This directory contains Terraform configuration for the Rearc Data Quest automated data pipeline.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     CloudWatch Events                           │
+│           (Daily Schedule: 0:00 UTC)                            │
+└────────────────┬────────────────────────────────────────────────┘
+                 │
+                 ▼
+        ┌────────────────────┐
+        │  Lambda Part 1&2   │
+        │  (BLS + DataUSA)   │
+        └────────┬───────────┘
+                 │
+         ┌───────▼────────┐
+         │                │
+         ▼                ▼
+    ┌────────┐      ┌─────────────────┐
+    │  S3    │      │ SQS Queue       │
+    │ Bucket │      │ (Event Trigger) │
+    └────────┘      └────────┬────────┘
+                             │
+                             ▼
+                    ┌────────────────────┐
+                    │  Lambda Part 3     │
+                    │  (Analytics)       │
+                    │  - Query 1         │
+                    │  - Query 2         │
+                    │  - Query 3         │
+                    └────────────────────┘
+                             │
+                             ▼
+                      CloudWatch Logs
+```
+
+## Components
+
+### 1. **S3 Bucket** (`s3.tf`)
+- Centralized data storage for BLS data and population API results
+- Versioning enabled for data history
+- Server-side encryption for security
+- Public access blocked
+- S3 event notifications configured to trigger SQS
+
+### 2. **SQS Queue** (`sqs.tf`)
+- Triggered when population JSON file is written to S3
+- Decouples Part 1&2 execution from Part 3 analytics
+- 14-day message retention
+- 15-minute visibility timeout
+
+### 3. **Lambda Functions**
+
+#### Part 1&2 (`lambda_part1_2.tf`)
+- **Triggers**: CloudWatch Events (daily at 00:00 UTC)
+- **Functions**:
+  - Syncs BLS time-series data from official source
+  - Fetches US population data from DataUSA API
+  - Uploads results to S3 bucket
+- **Runtime**: Python 3.11
+- **Timeout**: 5 minutes
+- **Memory**: 512 MB
+
+#### Part 3 (`lambda_part3.tf`)
+- **Triggers**: SQS messages (when population JSON is written)
+- **Functions**:
+  - Query 1: Population statistics (2013-2018)
+  - Query 2: Best year per series (max annual sum)
+  - Query 3: BLS-Population join (PRS30006032, Q01)
+- **Runtime**: Python 3.11
+- **Timeout**: 5 minutes
+- **Memory**: 1024 MB
+- **Ephemeral Storage**: 10 GB (for PySpark operations)
+
+### 4. **IAM Roles & Policies** (`iam.tf`)
+- Least-privilege access for Lambda functions
+- S3 permissions for data access
+- SQS permissions for message consumption
+- CloudWatch Logs permissions for debugging
+
+### 5. **CloudWatch Scheduling** (`lambda_part1_2.tf`)
+- EventBridge rule for daily execution
+- Configurable cron schedule (default: 0:00 UTC daily)
+- All executions logged to CloudWatch
+
+### 6. **Terraform Deployer User** (`deployer_iam.tf`)
+- Creates a dedicated IAM user for Terraform deployments
+- Uses a least-privilege customer-managed policy scoped to this project's resources
+- Produces access keys as sensitive Terraform outputs (store outside git)
+
+## Prerequisites
+
+1. **AWS Account** with appropriate permissions
+2. **AWS CLI** configured with credentials
+3. **Terraform** >= 1.0 installed
+4. **Python** 3.11+ (for Lambda runtimes)
+
+## Setup Instructions
+
+### 1. Bootstrap the Terraform Deployer User (one-time)
+
+Run once with an admin-capable IAM identity:
+
+```bash
+cd terraform
+terraform init
+terraform apply \
+  -target=aws_iam_user.deployer \
+  -target=aws_iam_access_key.deployer \
+  -target=aws_iam_policy.deployer_policy \
+  -target=aws_iam_user_policy_attachment.deployer_policy_attachment
+```
+
+Fetch and store credentials securely:
+
+```bash
+terraform output -raw deployer_access_key_id
+terraform output -raw deployer_secret_access_key
+```
+
+### 2. Configure AWS Credentials
+
+```bash
+export AWS_PROFILE=your-profile
+export AWS_REGION=us-east-1
+```
+
+Or configure via `~/.aws/credentials`:
+```
+[your-profile]
+aws_access_key_id = YOUR_ACCESS_KEY
+aws_secret_access_key = YOUR_SECRET_KEY
+```
+
+### 3. Initialize Terraform
+
+```bash
+cd terraform
+terraform init
+```
+
+### 4. Review Configuration
+
+Edit `terraform.tfvars` to customize:
+- AWS region
+- S3 bucket name (leave blank for auto-generated)
+- Lambda schedule (cron format)
+- Lambda timeout and memory allocation
+
+```bash
+cat terraform.tfvars
+```
+
+### 5. Build Lambda Packages
+
+From the project root:
+
+```bash
+cd ..
+bash build_lambda_packages.sh
+cd terraform
+```
+
+### 6. Plan Deployment
+
+```bash
+terraform plan -out=tfplan
+```
+
+Review the output to ensure all resources will be created as expected.
+
+### 7. Apply Configuration
+
+```bash
+terraform apply tfplan
+```
+
+This will:
+- Create S3 bucket with versioning and encryption
+- Create SQS queue with S3 event notifications
+- Create both Lambda functions with appropriate IAM roles
+- Set up CloudWatch Events for daily scheduling
+- Configure all necessary permissions and connections
+
+### 8. Verify Deployment
+
+```bash
+# Get deployment summary
+terraform output deployment_summary
+
+# Show S3 bucket name
+terraform output s3_bucket_name
+
+# Show CloudWatch Logs paths
+terraform output cloudwatch_logs_part1_2
+terraform output cloudwatch_logs_part3
+```
+
+## Testing
+
+### Test Part 1&2 Lambda
+
+```bash
+# Get function name
+FUNCTION_NAME=$(terraform output -raw lambda_part1_2_function_name)
+
+# Invoke manually
+aws lambda invoke \
+  --function-name $FUNCTION_NAME \
+  --payload '{"action": "sync_all"}' \
+  response.json
+
+# View response
+cat response.json | jq .
+```
+
+### Test Part 3 Lambda
+
+```bash
+# Get function name
+FUNCTION_NAME=$(terraform output -raw lambda_part3_function_name)
+
+# Invoke manually with test event
+aws lambda invoke \
+  --function-name $FUNCTION_NAME \
+  --payload '{"Records": [{"messageId": "test"}]}' \
+  response.json
+
+# View response
+cat response.json | jq .
+```
+
+### View CloudWatch Logs
+
+```bash
+# Part 1&2 logs
+aws logs tail /aws/lambda/rearc-data-quest-part1-2-dev --follow
+
+# Part 3 logs
+aws logs tail /aws/lambda/rearc-data-quest-part3-dev --follow
+```
+
+## Monitoring
+
+### CloudWatch Dashboards
+
+View Lambda execution metrics:
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/Lambda \
+  --metric-name Invocations \
+  --dimensions Name=FunctionName,Value=rearc-data-quest-part1-2-dev \
+  --start-time 2024-01-01T00:00:00Z \
+  --end-time 2024-01-02T00:00:00Z \
+  --period 3600 \
+  --statistics Sum
+```
+
+### SQS Queue Status
+
+```bash
+QUEUE_URL=$(terraform output -raw sqs_queue_url)
+
+aws sqs get-queue-attributes \
+  --queue-url $QUEUE_URL \
+  --attribute-names All
+```
+
+## Cleanup
+
+To remove all resources:
+
+```bash
+terraform destroy
+```
+
+**Warning**: This will delete:
+- S3 bucket (including all data)
+- SQS queue
+- Lambda functions
+- IAM roles
+- CloudWatch rules
+
+Ensure you've backed up any important data before destroying.
+
+## File Structure
+
+```
+terraform/
+├── main.tf                 # Main provider configuration
+├── variables.tf            # Variable definitions
+├── terraform.tfvars        # Variable values
+├── outputs.tf              # Output definitions
+├── deployer_iam.tf         # Deployment IAM user and least-privilege policy
+├── s3.tf                   # S3 bucket configuration
+├── sqs.tf                  # SQS queue configuration
+├── iam.tf                  # IAM roles and policies
+├── lambda_part1_2.tf       # Part 1&2 Lambda function
+├── lambda_part3.tf         # Part 3 Lambda function
+└── README.md               # This file
+
+../src/
+├── part1_bls_sync.py       # BLS sync implementation
+├── part2_datausa_api.py    # DataUSA API implementation
+├── lambda_part1_2/
+│   └── lambda_handler.py   # Part 1&2 Lambda handler
+├── lambda_part3/
+│   └── lambda_handler.py   # Part 3 Lambda handler
+└── lambda_requirements.txt # Python dependencies
+```
+
+## Environment Variables
+
+Lambda functions use the following environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `S3_BUCKET` | S3 bucket name | (set by Terraform) |
+| `BLS_PREFIX` | S3 prefix for BLS data | `bls/pr/` |
+| `POPULATION_FILE_KEY` | S3 key for population JSON | `population/data.json` |
+| `ANALYTICS_OUTPUT_PREFIX` | S3 prefix for analytics results | `analytics/results/` |
+| `ENVIRONMENT` | Environment name | `dev` |
+
+## Troubleshooting
+
+### Lambda Function Fails
+
+1. Check CloudWatch Logs:
+   ```bash
+   aws logs tail /aws/lambda/rearc-data-quest-part1-2-dev --follow
+   ```
+
+2. Verify IAM permissions:
+   ```bash
+   aws iam get-role-policy \
+     --role-name rearc-data-quest-lambda-part1-2-role-dev \
+     --policy-name rearc-data-quest-lambda-part1-2-s3-policy
+   ```
+
+3. Test S3 access:
+   ```bash
+   BUCKET=$(terraform output -raw s3_bucket_name)
+   aws s3 ls s3://$BUCKET/
+   ```
+
+### SQS Queue Not Triggering Lambda
+
+1. Verify S3 event notification:
+   ```bash
+   BUCKET=$(terraform output -raw s3_bucket_name)
+   aws s3api get-bucket-notification-configuration --bucket $BUCKET
+   ```
+
+2. Check SQS permissions:
+   ```bash
+   aws sqs get-queue-attributes \
+     --queue-url $(terraform output -raw sqs_queue_url) \
+     --attribute-names Policy
+   ```
+
+### CloudWatch Events Not Triggering
+
+1. Verify rule is enabled:
+   ```bash
+   aws events describe-rule --name rearc-data-quest-part1-2-schedule-dev
+   ```
+
+2. Check rule targets:
+   ```bash
+   aws events list-targets-by-rule --rule rearc-data-quest-part1-2-schedule-dev
+   ```
+
+## Advanced Configuration
+
+### Using S3 Backend for State
+
+Create `backend.tf`:
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "your-terraform-state-bucket"
+    key            = "rearc-data-quest/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-locks"
+  }
+}
+```
+
+### Custom Schedule
+
+Edit `terraform.tfvars`:
+```hcl
+lambda_part1_2_schedule = "0 */6 * * ? *"  # Every 6 hours
+```
+
+Cron format examples:
+- `0 0 * * ? *` - Daily at midnight
+- `0 */6 * * ? *` - Every 6 hours
+- `0 9 * * MON-FRI ? *` - Weekdays at 9 AM
+
+## Cost Estimation
+
+Estimated monthly costs (rough):
+- **S3**: $0.023 per GB (data storage) + requests
+- **Lambda**: $0.20 per 1M requests + $0.0000166667/GB-second
+- **SQS**: $0.40 per 1M requests
+- **CloudWatch**: $0.50 per log group + log storage
+
+For minimal usage (daily execution, few GB data), expect <$5/month.
+
+## Next Steps
+
+1. Configure AWS credentials
+2. Run `terraform init`
+3. Review `terraform.tfvars`
+4. Run `terraform plan`
+5. Run `terraform apply`
+6. Test Lambda functions manually
+7. Monitor CloudWatch Logs
+8. Set up alarms for failures (optional)
+
+## Support & Documentation
+
+- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
+- [AWS Lambda Documentation](https://docs.aws.amazon.com/lambda/)
+- [AWS SQS Documentation](https://docs.aws.amazon.com/sqs/)
+- [AWS EventBridge Documentation](https://docs.aws.amazon.com/eventbridge/)
