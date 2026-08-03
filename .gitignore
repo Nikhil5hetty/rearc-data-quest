@@ -40,8 +40,3 @@ terraform/*.tfstate*
 .vscode/settings.json
 *.swp
 *.swo
-
-# Lambda source copies written by old Terraform (no longer used)
-src/lambda_part1_2/part1_bls_sync.py
-src/lambda_part1_2/part2_datausa_api.py
-src/lambda_part3/lambda_handler.py

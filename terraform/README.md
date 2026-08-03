@@ -54,7 +54,7 @@ This directory contains Terraform configuration for the Rearc Data Quest automat
 
 ### 3. **Lambda Functions**
 
-#### Part 1&2 (`lambda_part1_2.tf`)
+#### Data Sync (`lambda_data_sync.tf`)
 - **Triggers**: CloudWatch Events (daily at 00:00 UTC)
 - **Functions**:
   - Syncs BLS time-series data from official source
@@ -64,7 +64,7 @@ This directory contains Terraform configuration for the Rearc Data Quest automat
 - **Timeout**: 5 minutes
 - **Memory**: 512 MB
 
-#### Part 3 (`lambda_part3.tf`)
+#### Data Process (`lambda_data_process.tf`)
 - **Triggers**: SQS messages (when population JSON is written)
 - **Functions**:
   - Query 1: Population statistics (2013-2018)
@@ -81,7 +81,7 @@ This directory contains Terraform configuration for the Rearc Data Quest automat
 - SQS permissions for message consumption
 - CloudWatch Logs permissions for debugging
 
-### 5. **CloudWatch Scheduling** (`lambda_part1_2.tf`)
+### 5. **CloudWatch Scheduling** (`lambda_data_sync.tf`)
 - EventBridge rule for daily execution
 - Configurable cron schedule (default: 0:00 UTC daily)
 - All executions logged to CloudWatch
@@ -144,14 +144,14 @@ terraform init
 
 ### 4. Review Configuration
 
-Edit `terraform.tfvars` to customize:
+Edit `environments/dev.tfvars` or `environments/prod.tfvars` to customize:
 - AWS region
 - S3 bucket name (leave blank for auto-generated)
 - Lambda schedule (cron format)
 - Lambda timeout and memory allocation
 
 ```bash
-cat terraform.tfvars
+cat environments/dev.tfvars
 ```
 
 ### 5. Build Lambda Packages
@@ -160,7 +160,7 @@ From the project root:
 
 ```bash
 cd ..
-bash build_lambda_packages.sh
+bash scripts/build.sh
 cd terraform
 ```
 
@@ -205,7 +205,7 @@ terraform output cloudwatch_logs_part3
 
 ```bash
 # Get function name
-FUNCTION_NAME=$(terraform output -raw lambda_part1_2_function_name)
+FUNCTION_NAME=$(terraform output -raw data_sync_function_name)
 
 # Invoke manually
 aws lambda invoke \
@@ -221,7 +221,7 @@ cat response.json | jq .
 
 ```bash
 # Get function name
-FUNCTION_NAME=$(terraform output -raw lambda_part3_function_name)
+FUNCTION_NAME=$(terraform output -raw data_process_function_name)
 
 # Invoke manually with test event
 aws lambda invoke \
@@ -237,10 +237,10 @@ cat response.json | jq .
 
 ```bash
 # Part 1&2 logs
-aws logs tail /aws/lambda/rearc-data-quest-part1-2-dev --follow
+aws logs tail /aws/lambda/rearc-data-sync-dev --follow
 
 # Part 3 logs
-aws logs tail /aws/lambda/rearc-data-quest-part3-dev --follow
+aws logs tail /aws/lambda/rearc-data-process-dev --follow
 ```
 
 ## Monitoring
@@ -252,7 +252,7 @@ View Lambda execution metrics:
 aws cloudwatch get-metric-statistics \
   --namespace AWS/Lambda \
   --metric-name Invocations \
-  --dimensions Name=FunctionName,Value=rearc-data-quest-part1-2-dev \
+  --dimensions Name=FunctionName,Value=rearc-data-sync-dev \
   --start-time 2024-01-01T00:00:00Z \
   --end-time 2024-01-02T00:00:00Z \
   --period 3600 \
@@ -292,24 +292,24 @@ Ensure you've backed up any important data before destroying.
 terraform/
 ├── main.tf                 # Main provider configuration
 ├── variables.tf            # Variable definitions
-├── terraform.tfvars        # Variable values
+├── environments/           # Dev/prod variable files
 ├── outputs.tf              # Output definitions
 ├── deployer_iam.tf         # Deployment IAM user and least-privilege policy
 ├── s3.tf                   # S3 bucket configuration
 ├── sqs.tf                  # SQS queue configuration
 ├── iam.tf                  # IAM roles and policies
-├── lambda_part1_2.tf       # Part 1&2 Lambda function
-├── lambda_part3.tf         # Part 3 Lambda function
+├── lambda_data_sync.tf     # Data sync Lambda function
+├── lambda_data_process.tf  # Data process Lambda function
 └── README.md               # This file
 
-../src/
-├── part1_bls_sync.py       # BLS sync implementation
-├── part2_datausa_api.py    # DataUSA API implementation
-├── lambda_part1_2/
-│   └── lambda_handler.py   # Part 1&2 Lambda handler
-├── lambda_part3/
-│   └── lambda_handler.py   # Part 3 Lambda handler
-└── lambda_requirements.txt # Python dependencies
+../lambdas/
+├── data-sync/
+│   ├── bls_sync.py         # BLS sync implementation
+│   ├── datausa_api.py      # DataUSA API implementation
+│   └── handler.py          # Data sync Lambda handler
+├── data-process/
+│   └── handler.py          # Data process Lambda handler
+└── requirements.txt        # Python dependencies
 ```
 
 ## Environment Variables
@@ -321,7 +321,6 @@ Lambda functions use the following environment variables:
 | `S3_BUCKET` | S3 bucket name | (set by Terraform) |
 | `BLS_PREFIX` | S3 prefix for BLS data | `bls/pr/` |
 | `POPULATION_FILE_KEY` | S3 key for population JSON | `population/data.json` |
-| `ANALYTICS_OUTPUT_PREFIX` | S3 prefix for analytics results | `analytics/results/` |
 | `ENVIRONMENT` | Environment name | `dev` |
 
 ## Troubleshooting
@@ -330,14 +329,14 @@ Lambda functions use the following environment variables:
 
 1. Check CloudWatch Logs:
    ```bash
-   aws logs tail /aws/lambda/rearc-data-quest-part1-2-dev --follow
+   aws logs tail /aws/lambda/rearc-data-sync-dev --follow
    ```
 
 2. Verify IAM permissions:
    ```bash
    aws iam get-role-policy \
-     --role-name rearc-data-quest-lambda-part1-2-role-dev \
-     --policy-name rearc-data-quest-lambda-part1-2-s3-policy
+     --role-name rearc-data-sync-role-dev \
+     --policy-name rearc-data-sync-s3-dev
    ```
 
 3. Test S3 access:
@@ -365,12 +364,12 @@ Lambda functions use the following environment variables:
 
 1. Verify rule is enabled:
    ```bash
-   aws events describe-rule --name rearc-data-quest-part1-2-schedule-dev
+   aws events describe-rule --name rearc-data-sync-schedule-dev
    ```
 
 2. Check rule targets:
    ```bash
-   aws events list-targets-by-rule --rule rearc-data-quest-part1-2-schedule-dev
+   aws events list-targets-by-rule --rule rearc-data-sync-schedule-dev
    ```
 
 ## Advanced Configuration
@@ -392,7 +391,7 @@ terraform {
 
 ### Custom Schedule
 
-Edit `terraform.tfvars`:
+Edit `environments/dev.tfvars` or `environments/prod.tfvars`:
 ```hcl
 lambda_part1_2_schedule = "0 */6 * * ? *"  # Every 6 hours
 ```
@@ -416,7 +415,7 @@ For minimal usage (daily execution, few GB data), expect <$5/month.
 
 1. Configure AWS credentials
 2. Run `terraform init`
-3. Review `terraform.tfvars`
+3. Review `environments/dev.tfvars` or `environments/prod.tfvars`
 4. Run `terraform plan`
 5. Run `terraform apply`
 6. Test Lambda functions manually
