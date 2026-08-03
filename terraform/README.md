@@ -135,6 +135,15 @@ aws_access_key_id = YOUR_ACCESS_KEY
 aws_secret_access_key = YOUR_SECRET_KEY
 ```
 
+### 2a. Configure GitHub Actions Secrets
+
+For the CI workflows, create these secrets in each GitHub environment:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+Use the `dev` environment secrets for [`.github/workflows/deploy-dev.yml`](/Users/Nikhil.Shetty@mheducation.com/Documents/UniB/rearc-data-quest/.github/workflows/deploy-dev.yml) and the `prod` environment secrets for [`.github/workflows/deploy-prod.yml`](/Users/Nikhil.Shetty@mheducation.com/Documents/UniB/rearc-data-quest/.github/workflows/deploy-prod.yml). The workflows now call `aws sts get-caller-identity` right after configuration so missing or invalid credentials fail fast with a clearer error.
+
 ### 3. Initialize Terraform
 
 ```bash
