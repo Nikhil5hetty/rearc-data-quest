@@ -86,10 +86,10 @@ This directory contains Terraform configuration for the Rearc Data Quest automat
 - Configurable cron schedule (default: 0:00 UTC daily)
 - All executions logged to CloudWatch
 
-### 6. **Terraform Deployer User** (`deployer_iam.tf`)
-- Creates a dedicated IAM user for Terraform deployments
-- Uses a least-privilege customer-managed policy scoped to this project's resources
-- Produces access keys as sensitive Terraform outputs (store outside git)
+### 6. **Bootstrap Deployer User** (`bootstrap/`)
+- Creates the Terraform deployer IAM user in a separate bootstrap-only root
+- Keeps normal dev/prod Terraform applies free of IAM user creation
+- Produces access keys as sensitive outputs during bootstrap only
 
 ## Prerequisites
 
@@ -102,24 +102,23 @@ This directory contains Terraform configuration for the Rearc Data Quest automat
 
 ### 1. Bootstrap the Terraform Deployer User (one-time)
 
-Run once with an admin-capable IAM identity:
+Run once with an admin-capable IAM identity using the bootstrap root:
 
 ```bash
-cd terraform
+cd terraform/bootstrap
 terraform init
-terraform apply \
-  -target=aws_iam_user.deployer \
-  -target=aws_iam_access_key.deployer \
-  -target=aws_iam_policy.deployer_policy \
-  -target=aws_iam_user_policy_attachment.deployer_policy_attachment
+terraform apply -var-file=../environments/dev.tfvars
 ```
 
 Fetch and store credentials securely:
 
 ```bash
+cd terraform/bootstrap
 terraform output -raw deployer_access_key_id
 terraform output -raw deployer_secret_access_key
 ```
+
+The bootstrap root is separate from the main environment deploys, so normal CI runs will not recreate this IAM user.
 
 ### 2. Configure AWS Credentials
 
@@ -173,7 +172,7 @@ bash scripts/build.sh
 cd terraform
 ```
 
-### 6. Plan Deployment
+### 6. Plan Terraform Deployment
 
 ```bash
 terraform plan -out=tfplan
@@ -181,18 +180,16 @@ terraform plan -out=tfplan
 
 Review the output to ensure all resources will be created as expected.
 
-### 7. Apply Configuration
+### 7. Apply Terraform Configuration
 
 ```bash
 terraform apply tfplan
 ```
 
 This will:
-- Create S3 bucket with versioning and encryption
-- Create SQS queue with S3 event notifications
-- Create both Lambda functions with appropriate IAM roles
-- Set up CloudWatch Events for daily scheduling
-- Configure all necessary permissions and connections
+- Create or update the S3 bucket, SQS queue, Lambda functions, and EventBridge schedule
+- Preserve the deployer user in `terraform/bootstrap/` only
+- Let you target `plan`, `apply`, `destroy`, `bootstrap`, or selected resources from the GitHub Actions workflow
 
 ### 8. Verify Deployment
 
@@ -204,8 +201,8 @@ terraform output deployment_summary
 terraform output s3_bucket_name
 
 # Show CloudWatch Logs paths
-terraform output cloudwatch_logs_part1_2
-terraform output cloudwatch_logs_part3
+terraform output cloudwatch_logs_data_sync
+terraform output cloudwatch_logs_data_process
 ```
 
 ## Testing
@@ -303,12 +300,12 @@ terraform/
 ├── variables.tf            # Variable definitions
 ├── environments/           # Dev/prod variable files
 ├── outputs.tf              # Output definitions
-├── deployer_iam.tf         # Deployment IAM user and least-privilege policy
+├── bootstrap/              # Bootstrap-only deployer user Terraform root
 ├── s3.tf                   # S3 bucket configuration
 ├── sqs.tf                  # SQS queue configuration
 ├── iam.tf                  # IAM roles and policies
-├── lambda_data_sync.tf     # Data sync Lambda function
-├── lambda_data_process.tf  # Data process Lambda function
+├── lambda_data_sync.tf      # Data sync Lambda function
+├── lambda_data_process.tf   # Data process Lambda function
 └── README.md               # This file
 
 ../lambdas/

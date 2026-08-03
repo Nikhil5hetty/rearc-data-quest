@@ -1,0 +1,57 @@
+name: Bootstrap Deployer User
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Bootstrap environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+        default: dev
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  bootstrap:
+    name: Create deployer user (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.0"
+
+      - name: Terraform Init (bootstrap)
+        working-directory: terraform/bootstrap
+        run: terraform init -reconfigure
+
+      - name: Terraform Apply (bootstrap)
+        working-directory: terraform/bootstrap
+        run: terraform apply -auto-approve -var-file=../environments/${{ inputs.environment }}.tfvars
+
+      - name: Show bootstrap outputs
+        working-directory: terraform/bootstrap
+        run: |
+          terraform output deployer_iam_user_name
+          terraform output deployer_access_key_id

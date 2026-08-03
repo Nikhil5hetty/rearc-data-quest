@@ -1,0 +1,155 @@
+name: Terraform — Dev/Prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+        default: dev
+      operation:
+        description: "Terraform operation"
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+        default: plan
+      scope:
+        description: "Scope to run"
+        required: true
+        type: choice
+        options:
+          - full
+          - selected
+          - bootstrap
+        default: full
+      targets:
+        description: "Comma-separated Terraform targets for selected scope"
+        required: false
+        type: string
+        default: ""
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  terraform:
+    name: Terraform ${{ inputs.operation }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.0"
+
+      - name: Build Lambda packages
+        if: ${{ inputs.scope != 'bootstrap' && inputs.operation != 'destroy' }}
+        run: bash scripts/build.sh
+
+      - name: Terraform Init (bootstrap)
+        if: ${{ inputs.scope == 'bootstrap' }}
+        working-directory: terraform/bootstrap
+        run: terraform init -reconfigure
+
+      - name: Terraform Validate (bootstrap)
+        if: ${{ inputs.scope == 'bootstrap' }}
+        working-directory: terraform/bootstrap
+        run: terraform validate
+
+      - name: Terraform Init (root)
+        if: ${{ inputs.scope != 'bootstrap' }}
+        working-directory: terraform
+        run: terraform init -reconfigure
+
+      - name: Terraform Validate (root)
+        if: ${{ inputs.scope != 'bootstrap' }}
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Build target args
+        if: ${{ inputs.scope == 'selected' }}
+        id: targets
+        shell: bash
+        run: |
+          TARGET_ARGS=""
+          IFS=',' read -ra TARGET_LIST <<< "${{ inputs.targets }}"
+          for target in "${TARGET_LIST[@]}"; do
+            target="$(echo "$target" | xargs)"
+            if [ -n "$target" ]; then
+              TARGET_ARGS="$TARGET_ARGS -target=$target"
+            fi
+          done
+          echo "args=$TARGET_ARGS" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform Plan (bootstrap)
+        if: ${{ inputs.scope == 'bootstrap' && inputs.operation == 'plan' }}
+        working-directory: terraform/bootstrap
+        run: terraform plan -var-file=../environments/${{ inputs.environment }}.tfvars -out=tfplan-bootstrap
+
+      - name: Terraform Apply (bootstrap)
+        if: ${{ inputs.scope == 'bootstrap' && inputs.operation == 'apply' }}
+        working-directory: terraform/bootstrap
+        run: terraform apply -auto-approve -var-file=../environments/${{ inputs.environment }}.tfvars
+
+      - name: Terraform Destroy (bootstrap)
+        if: ${{ inputs.scope == 'bootstrap' && inputs.operation == 'destroy' }}
+        working-directory: terraform/bootstrap
+        run: terraform destroy -auto-approve -var-file=../environments/${{ inputs.environment }}.tfvars
+
+      - name: Terraform Plan (root)
+        if: ${{ inputs.scope != 'bootstrap' && inputs.operation == 'plan' }}
+        working-directory: terraform
+        run: |
+          if [ "${{ inputs.scope }}" = "selected" ]; then
+            terraform plan -var-file=environments/${{ inputs.environment }}.tfvars ${{ steps.targets.outputs.args }} -out=tfplan-${{ inputs.environment }}
+          else
+            terraform plan -var-file=environments/${{ inputs.environment }}.tfvars -out=tfplan-${{ inputs.environment }}
+          fi
+
+      - name: Terraform Apply (root)
+        if: ${{ inputs.scope != 'bootstrap' && inputs.operation == 'apply' }}
+        working-directory: terraform
+        run: |
+          if [ "${{ inputs.scope }}" = "selected" ]; then
+            terraform apply -auto-approve -var-file=environments/${{ inputs.environment }}.tfvars ${{ steps.targets.outputs.args }}
+          else
+            terraform apply -auto-approve -var-file=environments/${{ inputs.environment }}.tfvars
+          fi
+
+      - name: Terraform Destroy (root)
+        if: ${{ inputs.scope != 'bootstrap' && inputs.operation == 'destroy' }}
+        working-directory: terraform
+        run: |
+          if [ "${{ inputs.scope }}" = "selected" ]; then
+            terraform destroy -auto-approve -var-file=environments/${{ inputs.environment }}.tfvars ${{ steps.targets.outputs.args }}
+          else
+            terraform destroy -auto-approve -var-file=environments/${{ inputs.environment }}.tfvars
+          fi

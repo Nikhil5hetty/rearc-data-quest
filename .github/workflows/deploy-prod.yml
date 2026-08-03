@@ -1,4 +1,4 @@
-name: Deploy — Prod
+name: Deploy Lambdas — Prod
 
 on:
   push:
@@ -72,14 +72,20 @@ jobs:
         working-directory: terraform
         run: terraform validate
 
-      - name: Terraform Plan
+      - name: Deploy Lambda resources
         working-directory: terraform
-        run: terraform plan -var-file=environments/prod.tfvars -out=tfplan-prod
-
-      - name: Terraform Apply
-        working-directory: terraform
-        run: terraform apply -auto-approve tfplan-prod
+        run: |
+          terraform apply -auto-approve \
+            -var-file=environments/prod.tfvars \
+            -target=aws_lambda_function.data_sync \
+            -target=aws_lambda_function.data_process \
+            -target=aws_cloudwatch_event_target.data_sync_lambda \
+            -target=aws_lambda_permission.allow_eventbridge_data_sync \
+            -target=aws_lambda_event_source_mapping.sqs_to_data_process \
+            -target=aws_lambda_permission.allow_sqs_data_process
 
       - name: Show deployment outputs
         working-directory: terraform
-        run: terraform output -var-file=environments/prod.tfvars
+        run: |
+          terraform output data_sync_function_name
+          terraform output data_process_function_name

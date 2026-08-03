@@ -1,32 +1,24 @@
-data "aws_partition" "current" {}
-
 locals {
-  deployer_bucket_name    = var.s3_bucket_name != "" ? var.s3_bucket_name : "rearc-raw-data-${var.environment}"
-  deployer_sync_role_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/rearc-data-sync-role-*"
-  deployer_proc_role_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/rearc-data-process-role-*"
+  deployer_bucket_name    = "rearc-raw-data-${var.environment}"
+  deployer_sync_role_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/rearc-data-sync-role-${var.environment}"
+  deployer_proc_role_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/rearc-data-process-role-${var.environment}"
   deployer_lambda_pattern = "arn:${data.aws_partition.current.partition}:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:rearc-data-*"
-  deployer_queue_pattern  = "arn:${data.aws_partition.current.partition}:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rearc-data-process-queue-*"
-  deployer_rule_pattern   = "arn:${data.aws_partition.current.partition}:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/rearc-data-sync-schedule-*"
+  deployer_queue_pattern  = "arn:${data.aws_partition.current.partition}:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rearc-data-process-queue-${var.environment}"
+  deployer_rule_pattern   = "arn:${data.aws_partition.current.partition}:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/rearc-data-sync-schedule-${var.environment}"
 }
 
 data "aws_iam_policy_document" "deployer" {
   statement {
-    sid    = "TerraformCallerIdentity"
-    effect = "Allow"
-    actions = [
-      "sts:GetCallerIdentity"
-    ]
+    sid       = "TerraformCallerIdentity"
+    effect    = "Allow"
+    actions   = ["sts:GetCallerIdentity"]
     resources = ["*"]
   }
 
   statement {
-    sid    = "TerraformS3CreateAndList"
-    effect = "Allow"
-    actions = [
-      "s3:CreateBucket",
-      "s3:DeleteBucket",
-      "s3:ListAllMyBuckets"
-    ]
+    sid       = "TerraformS3CreateAndList"
+    effect    = "Allow"
+    actions   = ["s3:CreateBucket", "s3:DeleteBucket", "s3:ListAllMyBuckets"]
     resources = ["*"]
   }
 
@@ -61,13 +53,9 @@ data "aws_iam_policy_document" "deployer" {
   }
 
   statement {
-    sid    = "TerraformS3ObjectAccess"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:DeleteObject"
-    ]
+    sid       = "TerraformS3ObjectAccess"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     resources = ["arn:${data.aws_partition.current.partition}:s3:::${local.deployer_bucket_name}/*"]
   }
 
@@ -91,12 +79,9 @@ data "aws_iam_policy_document" "deployer" {
   }
 
   statement {
-    sid    = "TerraformIamAttachBasicExecutionManagedPolicy"
-    effect = "Allow"
-    actions = [
-      "iam:AttachRolePolicy",
-      "iam:DetachRolePolicy"
-    ]
+    sid       = "TerraformIamAttachBasicExecutionManagedPolicy"
+    effect    = "Allow"
+    actions   = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
     resources = [local.deployer_sync_role_arn, local.deployer_proc_role_arn]
 
     condition {
@@ -107,11 +92,9 @@ data "aws_iam_policy_document" "deployer" {
   }
 
   statement {
-    sid    = "TerraformPassProjectLambdaRolesToLambda"
-    effect = "Allow"
-    actions = [
-      "iam:PassRole"
-    ]
+    sid       = "TerraformPassProjectLambdaRolesToLambda"
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
     resources = [local.deployer_sync_role_arn, local.deployer_proc_role_arn]
 
     condition {
@@ -122,13 +105,9 @@ data "aws_iam_policy_document" "deployer" {
   }
 
   statement {
-    sid    = "TerraformLambdaCreateAndEventSourceMappingRead"
-    effect = "Allow"
-    actions = [
-      "lambda:CreateFunction",
-      "lambda:CreateEventSourceMapping",
-      "lambda:ListEventSourceMappings"
-    ]
+    sid       = "TerraformLambdaCreateAndEventSourceMappingRead"
+    effect    = "Allow"
+    actions   = ["lambda:CreateFunction", "lambda:CreateEventSourceMapping", "lambda:ListEventSourceMappings"]
     resources = ["*"]
   }
 
@@ -155,13 +134,9 @@ data "aws_iam_policy_document" "deployer" {
   }
 
   statement {
-    sid    = "TerraformSqsCreateListAndRead"
-    effect = "Allow"
-    actions = [
-      "sqs:CreateQueue",
-      "sqs:ListQueues",
-      "sqs:GetQueueUrl"
-    ]
+    sid       = "TerraformSqsCreateListAndRead"
+    effect    = "Allow"
+    actions   = ["sqs:CreateQueue", "sqs:ListQueues", "sqs:GetQueueUrl"]
     resources = ["*"]
   }
 
@@ -199,11 +174,9 @@ data "aws_iam_policy_document" "deployer" {
   }
 
   statement {
-    sid    = "TerraformEventBridgeReadTargets"
-    effect = "Allow"
-    actions = [
-      "events:ListTargetsByRule"
-    ]
+    sid       = "TerraformEventBridgeReadTargets"
+    effect    = "Allow"
+    actions   = ["events:ListTargetsByRule"]
     resources = ["*"]
   }
 }
@@ -234,18 +207,15 @@ resource "aws_iam_user_policy_attachment" "deployer_policy_attachment" {
 }
 
 output "deployer_iam_user_name" {
-  description = "IAM user name for Terraform deployments"
-  value       = aws_iam_user.deployer.name
+  value = aws_iam_user.deployer.name
 }
 
 output "deployer_access_key_id" {
-  description = "Access key ID for deployer — add to AWS_ACCESS_KEY_ID"
-  value       = aws_iam_access_key.deployer.id
-  sensitive   = true
+  value     = aws_iam_access_key.deployer.id
+  sensitive = true
 }
 
 output "deployer_secret_access_key" {
-  description = "Secret key for deployer — add to AWS_SECRET_ACCESS_KEY; store securely"
-  value       = aws_iam_access_key.deployer.secret
-  sensitive   = true
+  value     = aws_iam_access_key.deployer.secret
+  sensitive = true
 }

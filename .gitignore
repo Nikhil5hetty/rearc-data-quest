@@ -21,6 +21,7 @@ dist/
 
 # Terraform state and ephemeral files
 terraform/.terraform/
+terraform/bootstrap/.terraform/
 terraform/.terraform.lock.hcl
 terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
